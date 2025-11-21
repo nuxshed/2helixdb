@@ -1,166 +1,195 @@
-/*
- * SCRIPT: Create tables for the 'Aethelgard Imperium' database
- * NOTE: Tables are created in dependency order.
- */
+-- 1. Database Creation and Selection [cite: 24, 25]
+DROP DATABASE IF EXISTS mini_world_db;
+CREATE DATABASE mini_world_db;
+USE mini_world_db;
 
--- ==== BASE ENTITIES (No foreign keys) ====
+-- ==========================================
+-- LEVEL 1: Independent Tables (No Foreign Keys)
+-- ==========================================
 
+-- Table: SECTOR
 CREATE TABLE SECTOR (
-    SectorID INT PRIMARY KEY,
-    SectorName VARCHAR(255) NOT NULL,
+    SectorID INT AUTO_INCREMENT PRIMARY KEY,
+    SectorName VARCHAR(100) NOT NULL UNIQUE,
     StellarCentralCoordinates VARCHAR(100)
 );
 
+-- Table: ETHNICITY
 CREATE TABLE ETHNICITY (
-    EthnicityID INT PRIMARY KEY,
-    Name VARCHAR(255) NOT NULL,
+    EthnicityID INT AUTO_INCREMENT PRIMARY KEY,
+    Name VARCHAR(100) NOT NULL,
     Tier VARCHAR(50)
 );
 
+-- Table: ASSET
 CREATE TABLE ASSET (
-    AssetID INT PRIMARY KEY,
+    AssetID INT AUTO_INCREMENT PRIMARY KEY,
     AssetType VARCHAR(100) NOT NULL
 );
 
--- ==== LEVEL 1 DEPENDENCIES ====
+-- ==========================================
+-- LEVEL 2: Geographic Hierarchy
+-- ==========================================
 
+-- Table: PLANET (Depends on SECTOR)
 CREATE TABLE PLANET (
-    PlanetID INT PRIMARY KEY,
-    PlanetName VARCHAR(255) NOT NULL,
+    PlanetID INT AUTO_INCREMENT PRIMARY KEY,
+    PlanetName VARCHAR(100) NOT NULL,
     StellarCoordinates VARCHAR(100),
-    SectorID INT NOT NULL,
-    FOREIGN KEY (SectorID) REFERENCES SECTOR(SectorID)
+    SectorID INT,
+    FOREIGN KEY (SectorID) REFERENCES SECTOR(SectorID) 
+        ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- ==== LEVEL 2 DEPENDENCIES ====
-
+-- Table: STATION (Depends on PLANET)
 CREATE TABLE STATION (
-    StationID INT PRIMARY KEY,
-    StationName VARCHAR(255) NOT NULL,
+    StationID INT AUTO_INCREMENT PRIMARY KEY,
+    StationName VARCHAR(100) NOT NULL,
     GeographicCoordinates VARCHAR(100),
-    PlanetID INT NOT NULL,
-    FOREIGN KEY (PlanetID) REFERENCES PLANET(PlanetID)
+    PlanetID INT,
+    FOREIGN KEY (PlanetID) REFERENCES PLANET(PlanetID) 
+        ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- ==== LEVEL 3 DEPENDENCIES ====
-
+-- Table: GOVERNINGOFFICE (Depends on STATION)
 CREATE TABLE GOVERNINGOFFICE (
-    OfficeID INT PRIMARY KEY,
-    OfficeName VARCHAR(255) NOT NULL,
-    JurisdictionLevel VARCHAR(100),
+    OfficeID INT AUTO_INCREMENT PRIMARY KEY,
+    OfficeName VARCHAR(100) NOT NULL,
+    JurisdictionLevel VARCHAR(50),
     StationID INT NOT NULL,
     FOREIGN KEY (StationID) REFERENCES STATION(StationID)
+        ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE TABLE CITIZEN (
-    CitizenID INT PRIMARY KEY,
-    FirstName VARCHAR(100) NOT NULL,
-    LastName VARCHAR(100) NOT NULL,
-    DateOfBirth DATE,
-    BiometricHash VARCHAR(128),
-    EthnicityID INT NOT NULL,
-    HomeStationID INT NOT NULL,
-    FOREIGN KEY (EthnicityID) REFERENCES ETHNICITY(EthnicityID),
-    FOREIGN KEY (HomeStationID) REFERENCES STATION(StationID)
-);
-
--- ==== LEVEL 4 DEPENDENCIES (Depend on previous tables) ====
-
+-- Table: LAW (Depends on GOVERNINGOFFICE)
 CREATE TABLE LAW (
-    LawID INT PRIMARY KEY,
+    LawID INT AUTO_INCREMENT PRIMARY KEY,
     Title VARCHAR(255) NOT NULL,
-    IssuingOfficeID INT NOT NULL,
+    IssuingOfficeID INT,
     FOREIGN KEY (IssuingOfficeID) REFERENCES GOVERNINGOFFICE(OfficeID)
+        ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE TABLE OFFICIAL (
-    CitizenID INT PRIMARY KEY, -- This is both PK and FK
-    RankTitle VARCHAR(100) NOT NULL,
-    SecurityClearance VARCHAR(50),
-    OfficeID INT NOT NULL,
-    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID),
-    FOREIGN KEY (OfficeID) REFERENCES GOVERNINGOFFICE(OfficeID)
+-- Table: LAW_APPLICABILITY (Associative entity: LAW, ETHNICITY, PLANET)
+CREATE TABLE LAW_APPLICABILITY (
+    ApplicabilityID INT AUTO_INCREMENT PRIMARY KEY,
+    LawID INT NOT NULL,
+    EthnicityID INT,
+    PlanetID INT,
+    FOREIGN KEY (LawID) REFERENCES LAW(LawID) ON DELETE CASCADE,
+    FOREIGN KEY (EthnicityID) REFERENCES ETHNICITY(EthnicityID) ON DELETE CASCADE,
+    FOREIGN KEY (PlanetID) REFERENCES PLANET(PlanetID) ON DELETE CASCADE
 );
 
-CREATE TABLE DEPENDENT (
-    DependentID INT PRIMARY KEY,
+-- ==========================================
+-- LEVEL 3: People and Roles
+-- ==========================================
+
+-- Table: CITIZEN (Depends on ETHNICITY, STATION)
+CREATE TABLE CITIZEN (
+    CitizenID INT AUTO_INCREMENT PRIMARY KEY,
     FirstName VARCHAR(100) NOT NULL,
     LastName VARCHAR(100) NOT NULL,
-    DependeeID INT NOT NULL, -- The Citizen this person depends on
+    DateOfBirth DATE NOT NULL,
+    BiometricHash VARCHAR(255) NOT NULL UNIQUE, -- Enforcing uniqueness for biometrics
+    EthnicityID INT,
+    HomeStationID INT,
+    FOREIGN KEY (EthnicityID) REFERENCES ETHNICITY(EthnicityID) 
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    FOREIGN KEY (HomeStationID) REFERENCES STATION(StationID) 
+        ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- Table: OFFICIAL (Subclass of CITIZEN - Depends on CITIZEN, GOVERNINGOFFICE)
+-- Note: CitizenID is both PK and FK here to enforce 1:1 relationship
+CREATE TABLE OFFICIAL (
+    CitizenID INT PRIMARY KEY,
+    RankTitle VARCHAR(100),
+    SecurityClearance INT CHECK (SecurityClearance BETWEEN 1 AND 10),
+    OfficeID INT,
+    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID) 
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (OfficeID) REFERENCES GOVERNINGOFFICE(OfficeID) 
+        ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- Table: DEPENDENT (Depends on CITIZEN)
+CREATE TABLE DEPENDENT (
+    DependentID INT AUTO_INCREMENT PRIMARY KEY,
+    FirstName VARCHAR(100) NOT NULL,
+    LastName VARCHAR(100) NOT NULL,
+    DependeeID INT NOT NULL,
     RelationshipType VARCHAR(50),
-    FOREIGN KEY (DependeeID) REFERENCES CITIZEN(CitizenID)
+    FOREIGN KEY (DependeeID) REFERENCES CITIZEN(CitizenID) 
+        ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- ==========================================
+-- LEVEL 4: Transactions, Logs, and Events
+-- ==========================================
+
+-- Table: ASSET_TRANSACTION (Depends on ASSET, CITIZEN)
 CREATE TABLE ASSET_TRANSACTION (
-    TransactionID INT PRIMARY KEY,
+    TransactionID INT AUTO_INCREMENT PRIMARY KEY,
     AssetID INT NOT NULL,
-    Value DECIMAL(18, 2),
-    BuyerCitizenID INT NOT NULL,
-    SellerCitizenID INT NOT NULL,
-    FOREIGN KEY (AssetID) REFERENCES ASSET(AssetID),
-    FOREIGN KEY (BuyerCitizenID) REFERENCES CITIZEN(CitizenID),
-    FOREIGN KEY (SellerCitizenID) REFERENCES CITIZEN(CitizenID)
+    Value DECIMAL(15, 2) NOT NULL,
+    BuyerCitizenID INT,
+    SellerCitizenID INT,
+    FOREIGN KEY (AssetID) REFERENCES ASSET(AssetID) ON DELETE CASCADE,
+    FOREIGN KEY (BuyerCitizenID) REFERENCES CITIZEN(CitizenID) ON DELETE SET NULL,
+    FOREIGN KEY (SellerCitizenID) REFERENCES CITIZEN(CitizenID) ON DELETE SET NULL
 );
 
-CREATE TABLE TRAVEL_LOG (
-    LogID INT PRIMARY KEY,
-    CitizenID INT NOT NULL,
-    DepartureStationID INT NOT NULL,
-    DepartureTimestamp TIMESTAMP,
-    ArrivalStationID INT NOT NULL,
-    ArrivalTimestamp TIMESTAMP,
-    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID),
-    FOREIGN KEY (DepartureStationID) REFERENCES STATION(StationID),
-    FOREIGN KEY (ArrivalStationID) REFERENCES STATION(StationID)
-);
-
-CREATE TABLE LAW_APPLICABILITY (
-    ApplicabilityID INT PRIMARY KEY,
-    LawID INT NOT NULL,
-    EthnicityID INT NOT NULL,
-    PlanetID INT NOT NULL,
-    FOREIGN KEY (LawID) REFERENCES LAW(LawID),
-    FOREIGN KEY (EthnicityID) REFERENCES ETHNICITY(EthnicityID),
-    FOREIGN KEY (PlanetID) REFERENCES PLANET(PlanetID)
-);
-
-
--- ==== LEVEL 5 DEPENDENCIES (Depend on OFFICIAL and other tables) ====
-
-CREATE TABLE ASSET_SEIZURE (
-    SeizureID INT PRIMARY KEY,
-    AssetID INT NOT NULL,
-    CitizenID INT NOT NULL, -- The citizen whose asset was seized
-    LawID INT NOT NULL,
-    AuthorizingOfficialID INT NOT NULL,
-    SeizureTimestamp TIMESTAMP,
-    FOREIGN KEY (AssetID) REFERENCES ASSET(AssetID),
-    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID),
-    FOREIGN KEY (LawID) REFERENCES LAW(LawID),
-    FOREIGN KEY (AuthorizingOfficialID) REFERENCES OFFICIAL(CitizenID)
-);
-
-CREATE TABLE CRIMINAL_SENTENCING (
-    ConvictionID INT PRIMARY KEY,
-    CitizenID INT NOT NULL,
-    LawID INT NOT NULL,
-    AuthorizingOfficialID INT NOT NULL,
-    ConvictionDate DATE,
-    CrimeDescription TEXT,
-    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID),
-    FOREIGN KEY (LawID) REFERENCES LAW(LawID),
-    FOREIGN KEY (AuthorizingOfficialID) REFERENCES OFFICIAL(CitizenID)
-);
-
+-- Table: VISA (Depends on CITIZEN, STATION, OFFICIAL)
 CREATE TABLE VISA (
-    VisaID INT PRIMARY KEY,
+    VisaID INT AUTO_INCREMENT PRIMARY KEY,
     CitizenID INT NOT NULL,
-    DestID INT NOT NULL, -- This is the destination StationID
-    Status VARCHAR(50),
+    DestID INT NOT NULL, -- Destination Station
+    Status ENUM('Pending', 'Approved', 'Rejected', 'Expired') DEFAULT 'Pending',
     IssueDate DATE,
     ExpiryDate DATE,
-    AuthorizingOfficialID INT NOT NULL,
-    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID),
-    FOREIGN KEY (DestID) REFERENCES STATION(StationID),
-    FOREIGN KEY (AuthorizingOfficialID) REFERENCES OFFICIAL(CitizenID)
+    AuthorizingOfficialID INT,
+    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID) ON DELETE CASCADE,
+    FOREIGN KEY (DestID) REFERENCES STATION(StationID) ON DELETE CASCADE,
+    FOREIGN KEY (AuthorizingOfficialID) REFERENCES OFFICIAL(CitizenID) ON DELETE SET NULL
+);
+
+-- Table: TRAVEL_LOG (Depends on CITIZEN, STATION)
+CREATE TABLE TRAVEL_LOG (
+    LogID INT AUTO_INCREMENT PRIMARY KEY,
+    CitizenID INT NOT NULL,
+    DepartureStationID INT,
+    DepartureTimestamp DATETIME,
+    ArrivalStationID INT,
+    ArrivalTimestamp DATETIME,
+    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID) ON DELETE CASCADE,
+    FOREIGN KEY (DepartureStationID) REFERENCES STATION(StationID) ON DELETE SET NULL,
+    FOREIGN KEY (ArrivalStationID) REFERENCES STATION(StationID) ON DELETE SET NULL
+);
+
+-- Table: CRIMINAL_SENTENCING (Depends on CITIZEN, LAW, OFFICIAL)
+CREATE TABLE CRIMINAL_SENTENCING (
+    ConvictionID INT AUTO_INCREMENT PRIMARY KEY,
+    CitizenID INT NOT NULL,
+    LawID INT NOT NULL,
+    AuthorizingOfficialID INT,
+    ConvictionDate DATE NOT NULL,
+    CrimeDescription TEXT,
+    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID) ON DELETE CASCADE,
+    FOREIGN KEY (LawID) REFERENCES LAW(LawID) ON DELETE CASCADE,
+    FOREIGN KEY (AuthorizingOfficialID) REFERENCES OFFICIAL(CitizenID) ON DELETE SET NULL
+);
+
+-- Table: ASSET_SEIZURE (Depends on ASSET, CITIZEN, LAW, OFFICIAL)
+CREATE TABLE ASSET_SEIZURE (
+    SeizureID INT AUTO_INCREMENT PRIMARY KEY,
+    AssetID INT NOT NULL,
+    CitizenID INT NOT NULL, -- The citizen the asset was seized from
+    LawID INT,
+    AuthorizingOfficialID INT,
+    SeizureTimestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (AssetID) REFERENCES ASSET(AssetID) ON DELETE CASCADE,
+    FOREIGN KEY (CitizenID) REFERENCES CITIZEN(CitizenID) ON DELETE CASCADE,
+    FOREIGN KEY (LawID) REFERENCES LAW(LawID) ON DELETE SET NULL,
+    FOREIGN KEY (AuthorizingOfficialID) REFERENCES OFFICIAL(CitizenID) ON DELETE SET NULL
 );
